@@ -23,5 +23,8 @@ namespace WebApi.JWTAuthServer.Models
 
         //  Navigation property cho mối quan hệ nhiều-nhiều với Role thông qua bảng UserRole.
         public ICollection<UserRole> UserRoles { get; set; }
+
+        // Navigation property cho refresh tokens
+        public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>(); // Thêm dòng này và khởi tạo
     }
 }

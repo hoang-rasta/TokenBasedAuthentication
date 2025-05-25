@@ -18,5 +18,6 @@ namespace WebApi.JWTAuthServer.Models
 
         // Navigation property cho mối quan hệ với UserRole (để truy cập các UserRole liên quan).
         public ICollection<UserRole> UserRoles { get; set; }
+
     }
 }

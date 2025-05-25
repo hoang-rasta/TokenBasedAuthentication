@@ -60,7 +60,6 @@ namespace WebApi.JWTAuthServer
                     ValidateAudience = false, // Tắt xác thực Audience (có thể bật khi cần).
                     ValidateLifetime = true, // Đảm bảo token chưa hết hạn.
                     ValidateIssuerSigningKey = true, // Đảm bảo khóa ký của token hợp lệ.
-
                     // Định nghĩa một IssuerSigningKeyResolver tùy chỉnh để động lấy các khóa ký từ endpoint JWKS.
                     // Resolver này được gọi bởi middleware JWT Bearer khi nó cần tìm khóa công khai đúng để xác thực chữ ký của token.
                     IssuerSigningKeyResolver = (token, securityToken, kid, parameters) =>

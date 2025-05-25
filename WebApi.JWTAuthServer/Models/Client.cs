@@ -22,5 +22,8 @@ namespace WebApi.JWTAuthServer.Models
         [Required]
         [MaxLength(200)]
         public string ClientURL { get; set; }
+
+        // Navigation property cho refresh tokens
+        public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>(); // Thêm dòng này và khởi tạo
     }
 }

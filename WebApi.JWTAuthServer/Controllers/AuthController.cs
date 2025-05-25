@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text;
 using WebApi.JWTAuthServer.DTOs;
 using WebApi.JWTAuthServer.Models;
 
@@ -85,8 +86,116 @@ namespace WebApi.JWTAuthServer.Controllers
             // Bước 5: Tại thời điểm này, xác thực thành công. Tiếp tục tạo một JWT token.
             var token = GenerateJwtToken(user, client);
 
-            // Bước 6: Trả về token đã tạo trong phản hồi OK (HTTP 200).
-            return Ok(new { Token = token });
+            // Tạo Refresh Token
+            var refreshToken = GenerateRefreshToken();
+
+            // Hash refresh token trước khi lưu trữ
+            var hashedRefreshToken = HashToken(refreshToken);
+
+            // Tạo entity RefreshToken
+            var refreshTokenEntity = new RefreshToken
+            {
+                Token = hashedRefreshToken, // Lưu hash của refresh token
+                UserId = user.Id,
+                ClientId = client.Id,
+                // Refresh token được đặt hết hạn sau 7 ngày (có thể điều chỉnh khi cần).
+                ExpiresAt = DateTime.UtcNow.AddDays(7),
+                CreatedAt = DateTime.UtcNow,
+                IsRevoked = false // Mặc định là không bị thu hồi
+            };
+
+
+            // Hash refresh token, cùng với thông tin người dùng và client liên quan, được lưu trữ trong bảng RefreshTokens.
+            _context.RefreshTokens.Add(refreshTokenEntity);
+
+            await _context.SaveChangesAsync();
+
+            // Trả về cả hai token cho client
+            return Ok(new TokenResponseDTO
+            {
+                Token = token,
+                RefreshToken = refreshToken // Trả về refresh token chưa hash cho client
+            });
+        }
+
+
+        // ---
+        // Endpoint mới để làm mới token
+        [HttpPost("RefreshToken")]
+        public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequestDTO requestDto)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            // Hash refresh token đến để so sánh với hash đã lưu trữ
+            var hashedToken = HashToken(requestDto.RefreshToken);
+
+            // Kiểm tra xem refresh token có tồn tại và khớp với ClientId đã cung cấp không.
+            // Truy xuất refresh token từ cơ sở dữ liệu, bao gồm User và Client liên quan
+            var storedRefreshToken = await _context.RefreshTokens
+                .Include(rt => rt.User)
+                    .ThenInclude(u => u.UserRoles)
+                        .ThenInclude(ur => ur.Role)
+                .Include(rt => rt.Client)
+                .FirstOrDefaultAsync(rt => rt.Token == hashedToken && rt.Client.ClientId == requestDto.ClientId);
+
+            if (storedRefreshToken == null)
+            {
+                return Unauthorized("Invalid refresh token.");
+            }
+
+            // Đảm bảo token chưa bị thu hồi.
+            if (storedRefreshToken.IsRevoked)
+            {
+                return Unauthorized("Refresh token has been revoked.");
+            }
+
+            // Đảm bảo token chưa hết hạn.
+            if (storedRefreshToken.ExpiresAt < DateTime.UtcNow)
+            {
+                return Unauthorized("Refresh token has expired.");
+            }
+
+            // Thu hồi refresh token hiện có để ngăn chặn việc sử dụng lại.
+            storedRefreshToken.IsRevoked = true;
+            storedRefreshToken.RevokedAt = DateTime.UtcNow;
+
+            // Lấy người dùng và client từ refresh token đã lưu trữ
+            var user = storedRefreshToken.User;
+            var client = storedRefreshToken.Client;
+
+            // Tạo một refresh token mới
+            var newRefreshToken = GenerateRefreshToken();
+            var hashedNewRefreshToken = HashToken(newRefreshToken);
+
+            // Tạo entity RefreshToken mới
+            var newRefreshTokenEntity = new RefreshToken
+            {
+                Token = hashedNewRefreshToken,
+                UserId = user.Id,
+                ClientId = client.Id,
+                ExpiresAt = DateTime.UtcNow.AddDays(7), // Điều chỉnh khi cần
+                CreatedAt = DateTime.UtcNow,
+                IsRevoked = false
+            };
+
+            // Lưu refresh token mới
+            _context.RefreshTokens.Add(newRefreshTokenEntity);
+
+            // Tạo access token JWT mới
+            var newJwtToken = GenerateJwtToken(user, client);
+
+            // Lưu các thay đổi vào cơ sở dữ liệu
+            await _context.SaveChangesAsync();
+
+            // Trả về các token mới cho client
+            return Ok(new TokenResponseDTO
+            {
+                Token = newJwtToken,
+                RefreshToken = newRefreshToken
+            });
         }
 
         // ---
@@ -153,7 +262,7 @@ namespace WebApi.JWTAuthServer.Controllers
                 issuer: _configuration["Jwt:Issuer"], // Issuer của token, thường là URL của ứng dụng của bạn.
                 audience: client.ClientURL, // Đối tượng dự định nhận token, thường là URL của ứng dụng client.
                 claims: claims, // Danh sách các claims sẽ được đưa vào token.
-                expires: DateTime.UtcNow.AddHours(1), // Thời gian hết hạn của token, đặt là 1 giờ kể từ thời điểm hiện tại (UTC).
+                expires: DateTime.UtcNow.AddSeconds(10), // Thời gian hết hạn của token, đặt là 1 giờ kể từ thời điểm hiện tại (UTC).
                 signingCredentials: creds // Thông tin xác thực dùng để ký token.
             );
 
@@ -165,6 +274,30 @@ namespace WebApi.JWTAuthServer.Controllers
 
             // Bước 12: Trả về chuỗi JWT đã được tuần tự hóa.
             return token;
+        }
+
+        // ---
+
+        // Tạo một refresh token ngẫu nhiên an toàn
+        private string GenerateRefreshToken()
+        {
+            // Một chuỗi ngẫu nhiên an toàn được tạo bằng RandomNumberGenerator
+            var randomNumber = new byte[64]; // Tạo 64 byte ngẫu nhiên
+            using (var rng = RandomNumberGenerator.Create())
+            {
+                rng.GetBytes(randomNumber); // Điền các byte ngẫu nhiên
+                return Convert.ToBase64String(randomNumber); // Chuyển đổi thành chuỗi Base64
+            }
+        }
+
+        // Hash token trước khi lưu trữ
+        private string HashToken(string token)
+        {
+            // Refresh token được hash bằng SHA256 trước khi lưu trữ vào cơ sở dữ liệu để ngăn chặn
+            // việc token bị đánh cắp làm ảnh hưởng đến bảo mật.
+            using var sha256 = SHA256.Create();
+            var hashedBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(token));
+            return Convert.ToBase64String(hashedBytes);
         }
     }
 }
