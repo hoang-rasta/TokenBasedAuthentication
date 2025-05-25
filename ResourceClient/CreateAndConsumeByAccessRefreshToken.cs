@@ -137,6 +137,15 @@ namespace ResourceClient
             }
             // Step Retrieve all products
             Console.WriteLine("Retrieving all products...");
+
+            // *** Xoá token***
+            // Buộc Access Token hết hạn hoặc không hợp lệ để kích hoạt refresh flow
+            tokenStorage.AccessToken = "invalid_token_to_force_refresh";
+            // Hoặc bạn có thể xóa nó: tokenStorage.AccessToken = null;
+            // Đảm bảo header được cập nhật với token không hợp lệ
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenStorage.AccessToken);
+            // *** ***
+
             var getAllResponse = await httpClient.GetAsync($"{ResourceServerBaseUrl}/api/Products/GetAll");
             if (getAllResponse.IsSuccessStatusCode)
             {

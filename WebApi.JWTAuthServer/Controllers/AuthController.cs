@@ -263,7 +263,7 @@ namespace WebApi.JWTAuthServer.Controllers
                 issuer: _configuration["Jwt:Issuer"], // Issuer của token, thường là URL của ứng dụng của bạn.
                 audience: client.ClientURL, // Đối tượng dự định nhận token, thường là URL của ứng dụng client.
                 claims: claims, // Danh sách các claims sẽ được đưa vào token.
-                expires: DateTime.UtcNow.AddSeconds(10), // Thời gian hết hạn của token, đặt là 1 giờ kể từ thời điểm hiện tại (UTC).
+                expires: DateTime.UtcNow.AddHours(10), // Thời gian hết hạn của token, đặt là 1 giờ kể từ thời điểm hiện tại (UTC).
                 signingCredentials: creds // Thông tin xác thực dùng để ký token.
             );
 
