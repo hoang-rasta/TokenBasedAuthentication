@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -274,6 +275,74 @@ namespace WebApi.JWTAuthServer.Controllers
 
             // Bước 12: Trả về chuỗi JWT đã được tuần tự hóa.
             return token;
+        }
+
+        // ---
+
+        [HttpPost("Logout")]
+        [Authorize] // Chỉ những người dùng đã xác thực mới có thể truy cập endpoint này
+        public async Task<IActionResult> Logout([FromBody] LogoutRequestDTO requestDto)
+        {
+            // 1. Xác thực dữ liệu đầu vào.
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            // 2. Trích xuất User ID từ access token's claims.
+            // Điều này đảm bảo rằng refresh token đang được thu hồi thuộc về người dùng đã xác thực.
+            var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier);
+            if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out int userId))
+            {
+                return Unauthorized("Invalid access token or user ID.");
+            }
+
+            // 3. Hash refresh token đến để so sánh với hash đã lưu trữ.
+            var hashedToken = HashToken(requestDto.RefreshToken);
+
+            // 4. Tìm kiếm Refresh Token trong cơ sở dữ liệu.
+            // Phải khớp với hash của token, ClientId và User ID.
+            var storedRefreshToken = await _context.RefreshTokens
+                .Include(rt => rt.User)
+                .Include(rt => rt.Client)
+                .FirstOrDefaultAsync(rt => rt.Token == hashedToken &&
+                                           rt.Client.ClientId == requestDto.ClientId &&
+                                           rt.UserId == userId);
+
+            // 5. Kiểm tra sự tồn tại và trạng thái của Refresh Token.
+            if (storedRefreshToken == null)
+            {
+                // Trả về Ok để tránh rò rỉ thông tin cho kẻ tấn công (không phân biệt token không tồn tại vs. đã bị thu hồi).
+                return Ok(new { Message = "Đăng xuất thành công (token không tìm thấy hoặc không hợp lệ)." });
+            }
+            if (storedRefreshToken.IsRevoked)
+            {
+                return BadRequest("Refresh token đã bị thu hồi trước đó.");
+            }
+
+            // 6. Thu hồi refresh token hiện tại.
+            storedRefreshToken.IsRevoked = true;
+            storedRefreshToken.RevokedAt = DateTime.UtcNow;
+
+            // 7. Xử lý "Đăng xuất từ tất cả các thiết bị" (tùy chọn).
+            if (requestDto.IsLogoutFromAllDevices)
+            {
+                var userRefreshTokens = await _context.RefreshTokens
+                    .Where(rt => rt.UserId == storedRefreshToken.UserId && !rt.IsRevoked)
+                    .ToListAsync();
+
+                foreach (var token in userRefreshTokens)
+                {
+                    token.IsRevoked = true;
+                    token.RevokedAt = DateTime.UtcNow;
+                }
+            }
+
+            // 8. Lưu các thay đổi vào cơ sở dữ liệu.
+            await _context.SaveChangesAsync();
+
+            // 9. Trả về phản hồi thành công.
+            return Ok(new { Message = "Đăng xuất thành công. Refresh token đã được thu hồi." });
         }
 
         // ---
